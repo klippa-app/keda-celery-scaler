@@ -76,7 +76,9 @@ func (e *ExternalScaler) IsActive(ctx context.Context, scaledObject *pb.ScaledOb
 	}, nil
 }
 
-var flowerClient = http.Client{}
+var flowerClient = http.Client{
+	Timeout: time.Second * 10,
+}
 
 func getLoad(flowerAddress, queue string) (int64, error) {
 	totalWorkersAvailable, totalActiveTasks, err := getQueueWorkers(flowerAddress, queue)
