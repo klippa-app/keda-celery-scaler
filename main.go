@@ -8,7 +8,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	pb "github.com/klippa-app/keda-celery-scaler/externalscaler"
@@ -42,13 +45,10 @@ type FlowerQueueLength struct {
 
 type ExternalScaler struct{}
 
-func (e *ExternalScaler) IsActive(ctx context.Context, scaledObject *pb.ScaledObjectRef) (*pb.IsActiveResponse, error) {
-	flowerAddress := scaledObject.ScalerMetadata["flowerAddress"]
-	queue := scaledObject.ScalerMetadata["queue"]
+var FlowerAddress = ""
 
-	if flowerAddress == "" {
-		return nil, status.Error(codes.InvalidArgument, "flowerAddress must be specified")
-	}
+func (e *ExternalScaler) IsActive(ctx context.Context, scaledObject *pb.ScaledObjectRef) (*pb.IsActiveResponse, error) {
+	queue := scaledObject.ScalerMetadata["queue"]
 
 	// Set default queue.
 	if queue == "" {
@@ -66,7 +66,7 @@ func (e *ExternalScaler) IsActive(ctx context.Context, scaledObject *pb.ScaledOb
 		activationLoadValue = activationLoadValueParsed
 	}
 
-	load, err := getLoad(ctx, flowerAddress, queue)
+	load, err := getLoad(ctx, queue)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -80,13 +80,13 @@ var flowerClient = http.Client{
 	Timeout: time.Second * 10,
 }
 
-func getLoad(ctx context.Context, flowerAddress, queue string) (int64, error) {
-	totalWorkersAvailable, totalActiveTasks, err := getQueueWorkers(ctx, flowerAddress, queue)
+func getLoad(ctx context.Context, queue string) (int64, error) {
+	totalWorkersAvailable, totalActiveTasks, err := getQueueWorkers(ctx, queue)
 	if err != nil {
 		return 0, err
 	}
 
-	queueLength, err := getQueueLength(ctx, flowerAddress, queue)
+	queueLength, err := getQueueLength(ctx, queue)
 	if err != nil {
 		return 0, err
 	}
@@ -105,9 +105,9 @@ func getLoad(ctx context.Context, flowerAddress, queue string) (int64, error) {
 	return int64(load * float64(100)), nil
 }
 
-func getQueueWorkers(ctx context.Context, flowerAddress, queue string) (int64, int64, error) {
+func getQueueWorkers(ctx context.Context, queue string) (int64, int64, error) {
 	// @too: decide whether we want to keep refresh.
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/workers?refresh=1", flowerAddress), nil)
+	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/workers?refresh=1", FlowerAddress), nil)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -129,7 +129,7 @@ func getQueueWorkers(ctx context.Context, flowerAddress, queue string) (int64, i
 		return 0, 0, status.Error(codes.Internal, err.Error())
 	}
 
-	workerStatus, err := getQueueWorkerStatus(ctx, flowerAddress)
+	workerStatus, err := getQueueWorkerStatus(ctx)
 	if err != nil {
 		return 0, 0, status.Error(codes.Internal, err.Error())
 	}
@@ -161,8 +161,8 @@ func getQueueWorkers(ctx context.Context, flowerAddress, queue string) (int64, i
 	return totalWorkersAvailable, totalActiveTasks, nil
 }
 
-func getQueueWorkerStatus(ctx context.Context, flowerAddress string) (*FlowerWorkerStatusResult, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/workers?status=1", flowerAddress), nil)
+func getQueueWorkerStatus(ctx context.Context) (*FlowerWorkerStatusResult, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/workers?status=1", FlowerAddress), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -187,8 +187,8 @@ func getQueueWorkerStatus(ctx context.Context, flowerAddress string) (*FlowerWor
 	return &payload, nil
 }
 
-func getQueueLength(ctx context.Context, flowerAddress, queue string) (int64, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/queues/length", flowerAddress), nil)
+func getQueueLength(ctx context.Context, queue string) (int64, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/queues/length", FlowerAddress), nil)
 	if err != nil {
 		return 0, err
 	}
@@ -241,19 +241,14 @@ func (e *ExternalScaler) GetMetricSpec(ctx context.Context, scaledObject *pb.Sca
 }
 
 func (e *ExternalScaler) GetMetrics(ctx context.Context, metricRequest *pb.GetMetricsRequest) (*pb.GetMetricsResponse, error) {
-	flowerAddress := metricRequest.ScaledObjectRef.ScalerMetadata["flowerAddress"]
 	queue := metricRequest.ScaledObjectRef.ScalerMetadata["queue"]
-
-	if flowerAddress == "" {
-		return nil, status.Error(codes.InvalidArgument, "flowerAddress must be specified")
-	}
 
 	// Set default queue.
 	if queue == "" {
 		queue = "celery"
 	}
 
-	load, err := getLoad(ctx, flowerAddress, queue)
+	load, err := getLoad(ctx, queue)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -272,6 +267,17 @@ func (e *ExternalScaler) StreamIsActive(scaledObject *pb.ScaledObjectRef, epsSer
 }
 
 func main() {
+	FlowerAddress = os.Getenv("FLOWER_ADDRESS")
+	FlowerAddress = strings.TrimSpace(FlowerAddress)
+	if FlowerAddress == "" {
+		log.Fatal("Env variable FLOWER_ADDRESS needs to be set to a valid URL, value is empty")
+	}
+
+	_, err := url.Parse(FlowerAddress)
+	if err != nil {
+		log.Fatalf("Env variable FLOWER_ADDRESS needs to be set to a valid URL: %s", err.Error())
+	}
+
 	grpcServer := grpc.NewServer()
 	lis, _ := net.Listen("tcp", ":6000")
 	pb.RegisterExternalScalerServer(grpcServer, &ExternalScaler{})
@@ -292,7 +298,8 @@ func checker() {
 			case <-done:
 				return
 			case <-ticker.C:
-				load, err := getLoad(context.Background(), "http://127.0.0.1:8888", "celery")
+				FlowerAddress = "http://127.0.0.1:8888"
+				load, err := getLoad(context.Background(), "celery")
 				if err != nil {
 					log.Fatal(err)
 				}
