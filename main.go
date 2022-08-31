@@ -66,7 +66,7 @@ func (e *ExternalScaler) IsActive(ctx context.Context, scaledObject *pb.ScaledOb
 		activationLoadValue = activationLoadValueParsed
 	}
 
-	load, err := getLoad(flowerAddress, queue)
+	load, err := getLoad(ctx, flowerAddress, queue)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -80,22 +80,32 @@ var flowerClient = http.Client{
 	Timeout: time.Second * 10,
 }
 
-func getLoad(flowerAddress, queue string) (int64, error) {
-	totalWorkersAvailable, totalActiveTasks, err := getQueueWorkers(flowerAddress, queue)
+func getLoad(ctx context.Context, flowerAddress, queue string) (int64, error) {
+	totalWorkersAvailable, totalActiveTasks, err := getQueueWorkers(ctx, flowerAddress, queue)
 	if err != nil {
 		return 0, err
 	}
 
-	queueLength, err := getQueueLength(flowerAddress, queue)
+	queueLength, err := getQueueLength(ctx, flowerAddress, queue)
 	if err != nil {
 		return 0, err
 	}
 
-	load := float64(totalActiveTasks+queueLength) / float64(totalWorkersAvailable)
+	if totalActiveTasks+queueLength == 0 {
+		return 0, nil
+	}
+
+	taskCount := float64(totalActiveTasks + queueLength)
+
+	if totalWorkersAvailable == 0 {
+		return int64(taskCount * float64(100)), nil
+	}
+
+	load := taskCount / float64(totalWorkersAvailable)
 	return int64(load * float64(100)), nil
 }
 
-func getQueueWorkers(flowerAddress, queue string) (int64, int64, error) {
+func getQueueWorkers(ctx context.Context, flowerAddress, queue string) (int64, int64, error) {
 	// @too: decide whether we want to keep refresh.
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/workers?refresh=1", flowerAddress), nil)
 	if err != nil {
@@ -119,7 +129,7 @@ func getQueueWorkers(flowerAddress, queue string) (int64, int64, error) {
 		return 0, 0, status.Error(codes.Internal, err.Error())
 	}
 
-	workerStatus, err := getQueueWorkerStatus(flowerAddress)
+	workerStatus, err := getQueueWorkerStatus(ctx, flowerAddress)
 	if err != nil {
 		return 0, 0, status.Error(codes.Internal, err.Error())
 	}
@@ -151,8 +161,8 @@ func getQueueWorkers(flowerAddress, queue string) (int64, int64, error) {
 	return totalWorkersAvailable, totalActiveTasks, nil
 }
 
-func getQueueWorkerStatus(flowerAddress string) (*FlowerWorkerStatusResult, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/workers?status=1", flowerAddress), nil)
+func getQueueWorkerStatus(ctx context.Context, flowerAddress string) (*FlowerWorkerStatusResult, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/workers?status=1", flowerAddress), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -177,8 +187,8 @@ func getQueueWorkerStatus(flowerAddress string) (*FlowerWorkerStatusResult, erro
 	return &payload, nil
 }
 
-func getQueueLength(flowerAddress, queue string) (int64, error) {
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/queues/length", flowerAddress), nil)
+func getQueueLength(ctx context.Context, flowerAddress, queue string) (int64, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/queues/length", flowerAddress), nil)
 	if err != nil {
 		return 0, err
 	}
@@ -230,7 +240,7 @@ func (e *ExternalScaler) GetMetricSpec(ctx context.Context, scaledObject *pb.Sca
 	}, nil
 }
 
-func (e *ExternalScaler) GetMetrics(_ context.Context, metricRequest *pb.GetMetricsRequest) (*pb.GetMetricsResponse, error) {
+func (e *ExternalScaler) GetMetrics(ctx context.Context, metricRequest *pb.GetMetricsRequest) (*pb.GetMetricsResponse, error) {
 	flowerAddress := metricRequest.ScaledObjectRef.ScalerMetadata["flowerAddress"]
 	queue := metricRequest.ScaledObjectRef.ScalerMetadata["queue"]
 
@@ -243,7 +253,7 @@ func (e *ExternalScaler) GetMetrics(_ context.Context, metricRequest *pb.GetMetr
 		queue = "celery"
 	}
 
-	load, err := getLoad(flowerAddress, queue)
+	load, err := getLoad(ctx, flowerAddress, queue)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -282,7 +292,7 @@ func checker() {
 			case <-done:
 				return
 			case <-ticker.C:
-				load, err := getLoad("http://127.0.0.1:8888", "celery")
+				load, err := getLoad(context.Background(), "http://127.0.0.1:8888", "celery")
 				if err != nil {
 					log.Fatal(err)
 				}
