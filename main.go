@@ -92,12 +92,16 @@ func getLoad(ctx context.Context, queue string) (int64, error) {
 	}
 
 	if totalActiveTasks+queueLength == 0 {
+		log.Printf("Load info for queue %s: workers: %d, active tasks: %d, queue length: %d", queue, totalWorkersAvailable, totalActiveTasks, queueLength)
+
 		return 0, nil
 	}
 
 	taskCount := float64(totalActiveTasks + queueLength)
 
 	if totalWorkersAvailable == 0 {
+		log.Printf("Load info for queue %s: workers: %d, active tasks: %d, queue length: %d", queue, totalWorkersAvailable, totalActiveTasks, queueLength)
+
 		return int64(taskCount * float64(100)), nil
 	}
 
