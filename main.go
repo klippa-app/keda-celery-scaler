@@ -138,7 +138,7 @@ func getQueueWorkers(ctx context.Context, queue string) (int64, int64, error) {
 		return 0, 0, status.Error(codes.Internal, err.Error())
 	}
 
-	workerStatus, err := getQueueWorkerStatus(ctx)
+	workerStatus, err := getQueueWorkerStatus(ctx, queue)
 	if err != nil {
 		return 0, 0, status.Error(codes.Internal, err.Error())
 	}
@@ -167,12 +167,12 @@ func getQueueWorkers(ctx context.Context, queue string) (int64, int64, error) {
 		}
 	}
 
-	log.Printf("Calculating worker info took %s", time.Since(start).String())
+	log.Printf("Calculating worker info for queue %s took %s", queue, time.Since(start).String())
 
 	return totalWorkersAvailable, totalActiveTasks, nil
 }
 
-func getQueueWorkerStatus(ctx context.Context) (*FlowerWorkerStatusResult, error) {
+func getQueueWorkerStatus(ctx context.Context, queue string) (*FlowerWorkerStatusResult, error) {
 	start := time.Now()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/workers?status=1", FlowerAddress), nil)
@@ -197,7 +197,7 @@ func getQueueWorkerStatus(ctx context.Context) (*FlowerWorkerStatusResult, error
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	log.Printf("Calculating worker status took %s", time.Since(start).String())
+	log.Printf("Calculating worker status for queue %s took %s", queue, time.Since(start).String())
 
 	return &payload, nil
 }
@@ -233,7 +233,7 @@ func getQueueLength(ctx context.Context, queue string) (int64, error) {
 		}
 	}
 
-	log.Printf("Calculating queue length took %s", time.Since(start).String())
+	log.Printf("Calculating queue length for queue %s took %s", queue, time.Since(start).String())
 
 	return 0, nil
 }
