@@ -77,7 +77,7 @@ func (e *ExternalScaler) IsActive(ctx context.Context, scaledObject *pb.ScaledOb
 }
 
 var flowerClient = http.Client{
-	Timeout: time.Second * 10,
+	Timeout: time.Second * 30,
 }
 
 func getLoad(ctx context.Context, queue string) (int64, error) {
@@ -103,7 +103,7 @@ func getLoad(ctx context.Context, queue string) (int64, error) {
 
 	load := taskCount / float64(totalWorkersAvailable)
 
-	log.Printf("Load info: workers: %d, active tasks: %d, queue length: %d", totalWorkersAvailable, totalActiveTasks, queueLength)
+	log.Printf("Load info for queue %s: workers: %d, active tasks: %d, queue length: %d", queue, totalWorkersAvailable, totalActiveTasks, queueLength)
 
 	return int64(load * float64(100)), nil
 }
@@ -267,6 +267,7 @@ func (e *ExternalScaler) GetMetrics(ctx context.Context, metricRequest *pb.GetMe
 
 	load, err := getLoad(ctx, queue)
 	if err != nil {
+		log.Printf("Could not load load for queue %s, error: %s", queue, err.Error())
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
