@@ -270,7 +270,7 @@ func (e *ExternalScaler) GetMetrics(ctx context.Context, metricRequest *pb.GetMe
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	log.Printf("Calculating load took %s", time.Since(start).String())
+	log.Printf("Calculating load took %s, calculated load is %d", time.Since(start).String(), load)
 
 	return &pb.GetMetricsResponse{
 		MetricValues: []*pb.MetricValue{{
