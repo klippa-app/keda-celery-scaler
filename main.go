@@ -102,10 +102,15 @@ func getLoad(ctx context.Context, queue string) (int64, error) {
 	}
 
 	load := taskCount / float64(totalWorkersAvailable)
+
+	log.Printf("Load info: workers: %d, active tasks: %d, queue length: %d", totalWorkersAvailable, totalActiveTasks, queueLength)
+
 	return int64(load * float64(100)), nil
 }
 
 func getQueueWorkers(ctx context.Context, queue string) (int64, int64, error) {
+	start := time.Now()
+
 	// @too: decide whether we want to keep refresh.
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/workers?refresh=1", FlowerAddress), nil)
 	if err != nil {
@@ -158,10 +163,14 @@ func getQueueWorkers(ctx context.Context, queue string) (int64, int64, error) {
 		}
 	}
 
+	log.Printf("Calculating worker info took %s", time.Since(start).String())
+
 	return totalWorkersAvailable, totalActiveTasks, nil
 }
 
 func getQueueWorkerStatus(ctx context.Context) (*FlowerWorkerStatusResult, error) {
+	start := time.Now()
+
 	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/workers?status=1", FlowerAddress), nil)
 	if err != nil {
 		return nil, err
@@ -184,10 +193,14 @@ func getQueueWorkerStatus(ctx context.Context) (*FlowerWorkerStatusResult, error
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
+	log.Printf("Calculating worker status took %s", time.Since(start).String())
+
 	return &payload, nil
 }
 
 func getQueueLength(ctx context.Context, queue string) (int64, error) {
+	start := time.Now()
+
 	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/queues/length", FlowerAddress), nil)
 	if err != nil {
 		return 0, err
@@ -215,6 +228,8 @@ func getQueueLength(ctx context.Context, queue string) (int64, error) {
 			return int64(payload.ActiveQueues[i].Messages), nil
 		}
 	}
+
+	log.Printf("Calculating queue length took %s", time.Since(start).String())
 
 	return 0, nil
 }
@@ -248,10 +263,14 @@ func (e *ExternalScaler) GetMetrics(ctx context.Context, metricRequest *pb.GetMe
 		queue = "celery"
 	}
 
+	start := time.Now()
+
 	load, err := getLoad(ctx, queue)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
+
+	log.Printf("Calculating load took %s", time.Since(start).String())
 
 	return &pb.GetMetricsResponse{
 		MetricValues: []*pb.MetricValue{{
