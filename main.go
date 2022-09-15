@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,6 +16,7 @@ import (
 	pb "github.com/klippa-app/keda-celery-scaler/externalscaler"
 
 	"github.com/go-chi/stampede"
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -97,7 +97,7 @@ func getLoad(ctx context.Context, queue string) (int64, error) {
 	}
 
 	if totalActiveTasks+queueLength == 0 {
-		log.Printf("Load info for queue %s: workers: %d, active tasks: %d, queue length: %d", queue, totalWorkersAvailable, totalActiveTasks, queueLength)
+		log.Tracef("Load info for queue %s: workers: %d, active tasks: %d, queue length: %d", queue, totalWorkersAvailable, totalActiveTasks, queueLength)
 
 		return 0, nil
 	}
@@ -105,14 +105,14 @@ func getLoad(ctx context.Context, queue string) (int64, error) {
 	taskCount := float64(totalActiveTasks + queueLength)
 
 	if totalWorkersAvailable == 0 {
-		log.Printf("Load info for queue %s: workers: %d, active tasks: %d, queue length: %d", queue, totalWorkersAvailable, totalActiveTasks, queueLength)
+		log.Tracef("Load info for queue %s: workers: %d, active tasks: %d, queue length: %d", queue, totalWorkersAvailable, totalActiveTasks, queueLength)
 
 		return int64(taskCount * float64(100)), nil
 	}
 
 	load := taskCount / float64(totalWorkersAvailable)
 
-	log.Printf("Load info for queue %s: workers: %d, active tasks: %d, queue length: %d", queue, totalWorkersAvailable, totalActiveTasks, queueLength)
+	log.Tracef("Load info for queue %s: workers: %d, active tasks: %d, queue length: %d", queue, totalWorkersAvailable, totalActiveTasks, queueLength)
 
 	return int64(load * float64(100)), nil
 }
@@ -152,7 +152,7 @@ func getQueueWorkers(ctx context.Context, queue string) (int64, int64, error) {
 		return 0, 0, status.Error(codes.Internal, err.Error())
 	}
 
-	log.Printf("Fetching worker info for queue %s took %s", queue, time.Since(start).String())
+	log.Tracef("Fetching worker info for queue %s took %s", queue, time.Since(start).String())
 
 	workerInfo := workerInfoData.(FlowerWorkerResult)
 
@@ -185,7 +185,7 @@ func getQueueWorkers(ctx context.Context, queue string) (int64, int64, error) {
 		}
 	}
 
-	log.Printf("Calculating worker and task counts for queue %s took %s", queue, time.Since(start).String())
+	log.Tracef("Calculating worker and task counts for queue %s took %s", queue, time.Since(start).String())
 
 	return totalWorkersAvailable, totalActiveTasks, nil
 }
@@ -226,7 +226,7 @@ func getQueueWorkerStatus(ctx context.Context, queue string) (*FlowerWorkerStatu
 
 	queueWorkerStatus := queueWorkerStatusData.(FlowerWorkerStatusResult)
 
-	log.Printf("Fetching worker status for queue %s took %s", queue, time.Since(start).String())
+	log.Tracef("Fetching worker status for queue %s took %s", queue, time.Since(start).String())
 
 	return &queueWorkerStatus, nil
 }
@@ -262,7 +262,7 @@ func getQueueLength(ctx context.Context, queue string) (int64, error) {
 		}
 	}
 
-	log.Printf("Fetching queue length for queue %s took %s", queue, time.Since(start).String())
+	log.Tracef("Fetching queue length for queue %s took %s", queue, time.Since(start).String())
 
 	return 0, nil
 }
@@ -300,11 +300,11 @@ func (e *ExternalScaler) GetMetrics(ctx context.Context, metricRequest *pb.GetMe
 
 	load, err := getLoad(ctx, queue)
 	if err != nil {
-		log.Printf("Could not load load for queue %s, error: %s", queue, err.Error())
+		log.Errorf("Could not load load for queue %s, error: %s", queue, err.Error())
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	log.Printf("Calculating load for queue %s took %s, calculated load is %d", queue, time.Since(start).String(), load)
+	log.Debugf("Calculating load for queue %s took %s, calculated load is %d", queue, time.Since(start).String(), load)
 
 	return &pb.GetMetricsResponse{
 		MetricValues: []*pb.MetricValue{{
@@ -320,6 +320,16 @@ func (e *ExternalScaler) StreamIsActive(scaledObject *pb.ScaledObjectRef, epsSer
 }
 
 func main() {
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel != "" {
+		parsedLogLevel, err := log.ParseLevel(logLevel)
+		if err == nil {
+			log.SetLevel(parsedLogLevel)
+		} else {
+			log.Warnf("invalid log level given: %s", logLevel)
+		}
+	}
+
 	FlowerAddress = os.Getenv("FLOWER_ADDRESS")
 	FlowerAddress = strings.TrimSpace(FlowerAddress)
 	if FlowerAddress == "" {
