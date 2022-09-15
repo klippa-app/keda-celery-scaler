@@ -341,11 +341,12 @@ func main() {
 		log.Fatalf("Env variable FLOWER_ADDRESS needs to be set to a valid URL: %s", err.Error())
 	}
 
+	address := ":6000"
 	grpcServer := grpc.NewServer()
-	lis, _ := net.Listen("tcp", ":6000")
+	lis, _ := net.Listen("tcp", address)
 	pb.RegisterExternalScalerServer(grpcServer, &ExternalScaler{})
 
-	fmt.Println("listenting on :6000")
+	log.Infof("listenting on %s", address)
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatal(err)
 	}
