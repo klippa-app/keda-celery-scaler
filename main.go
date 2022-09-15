@@ -16,9 +16,14 @@ import (
 
 	pb "github.com/klippa-app/keda-celery-scaler/externalscaler"
 
+	"github.com/go-chi/stampede"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+)
+
+var (
+	reqCache = stampede.NewCache(512, time.Second*5, 0)
 )
 
 type FlowerWorker struct {
@@ -112,31 +117,44 @@ func getLoad(ctx context.Context, queue string) (int64, error) {
 	return int64(load * float64(100)), nil
 }
 
-func getQueueWorkers(ctx context.Context, queue string) (int64, int64, error) {
-	start := time.Now()
-
-	// @too: decide whether we want to keep refresh.
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/workers?refresh=1", FlowerAddress), nil)
+func loadWorkerInfo(ctx context.Context) (interface{}, error) {
+	// We need to add refresh so that we always have the latest info.
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/workers?refresh=1", FlowerAddress), nil)
 	if err != nil {
-		return 0, 0, err
+		return nil, err
 	}
 
 	resp, err := flowerClient.Do(req)
 	if err != nil {
-		return 0, 0, err
+		return nil, err
 	}
 
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return 0, 0, status.Error(codes.Internal, err.Error())
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	payload := FlowerWorkerResult{}
 	err = json.Unmarshal(body, &payload)
 	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	return payload, nil
+}
+
+func getQueueWorkers(ctx context.Context, queue string) (int64, int64, error) {
+	start := time.Now()
+
+	workerInfoData, err := reqCache.Get(ctx, "worker_info", loadWorkerInfo)
+	if err != nil {
 		return 0, 0, status.Error(codes.Internal, err.Error())
 	}
+
+	log.Printf("Fetching worker info for queue %s took %s", queue, time.Since(start).String())
+
+	workerInfo := workerInfoData.(FlowerWorkerResult)
 
 	workerStatus, err := getQueueWorkerStatus(ctx, queue)
 	if err != nil {
@@ -147,34 +165,32 @@ func getQueueWorkers(ctx context.Context, queue string) (int64, int64, error) {
 	totalActiveTasks := int64(0)
 
 	// Loop through all available workers.
-	for worker := range payload {
+	for worker := range workerInfo {
 		if !(*workerStatus)[worker] {
 			continue
 		}
 
 		// Only count the workers that are listening to our queue.
 		shouldCountWorker := false
-		for i := range payload[worker].ActiveQueues {
-			if payload[worker].ActiveQueues[i].Name == queue {
+		for i := range workerInfo[worker].ActiveQueues {
+			if workerInfo[worker].ActiveQueues[i].Name == queue {
 				shouldCountWorker = true
 				break
 			}
 		}
 
 		if shouldCountWorker {
-			totalActiveTasks += int64(len(payload[worker].Active))
-			totalWorkersAvailable += int64(payload[worker].Stats.Pool.MaxConcurrency)
+			totalActiveTasks += int64(len(workerInfo[worker].Active))
+			totalWorkersAvailable += int64(workerInfo[worker].Stats.Pool.MaxConcurrency)
 		}
 	}
 
-	log.Printf("Calculating worker info for queue %s took %s", queue, time.Since(start).String())
+	log.Printf("Calculating worker and task counts for queue %s took %s", queue, time.Since(start).String())
 
 	return totalWorkersAvailable, totalActiveTasks, nil
 }
 
-func getQueueWorkerStatus(ctx context.Context, queue string) (*FlowerWorkerStatusResult, error) {
-	start := time.Now()
-
+func loadQueueWorkerStatus(ctx context.Context) (interface{}, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/workers?status=1", FlowerAddress), nil)
 	if err != nil {
 		return nil, err
@@ -197,9 +213,22 @@ func getQueueWorkerStatus(ctx context.Context, queue string) (*FlowerWorkerStatu
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	log.Printf("Calculating worker status for queue %s took %s", queue, time.Since(start).String())
+	return payload, nil
+}
 
-	return &payload, nil
+func getQueueWorkerStatus(ctx context.Context, queue string) (*FlowerWorkerStatusResult, error) {
+	start := time.Now()
+
+	queueWorkerStatusData, err := reqCache.Get(ctx, "worker_stats", loadQueueWorkerStatus)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	queueWorkerStatus := queueWorkerStatusData.(FlowerWorkerStatusResult)
+
+	log.Printf("Fetching worker status for queue %s took %s", queue, time.Since(start).String())
+
+	return &queueWorkerStatus, nil
 }
 
 func getQueueLength(ctx context.Context, queue string) (int64, error) {
@@ -233,7 +262,7 @@ func getQueueLength(ctx context.Context, queue string) (int64, error) {
 		}
 	}
 
-	log.Printf("Calculating queue length for queue %s took %s", queue, time.Since(start).String())
+	log.Printf("Fetching queue length for queue %s took %s", queue, time.Since(start).String())
 
 	return 0, nil
 }
