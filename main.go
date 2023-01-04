@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,10 +53,6 @@ func (e *ExternalScaler) IsActive(ctx context.Context, scaledObject *pb.ScaledOb
 	}, nil
 }
 
-var flowerClient = http.Client{
-	Timeout: time.Second * 30,
-}
-
 func getLoad(ctx context.Context, queue string) (int64, error) {
 	totalWorkersAvailable, totalActiveTasks := getQueueWorkers(queue)
 	queueLength, err := getQueueLength(ctx, queue)
@@ -87,10 +82,10 @@ func getLoad(ctx context.Context, queue string) (int64, error) {
 }
 
 func getQueueWorkers(queue string) (int64, int64) {
+	start := time.Now()
+
 	workerMapLock.Lock()
 	defer workerMapLock.Unlock()
-
-	start := time.Now()
 
 	totalWorkersAvailable := int64(0)
 	totalActiveTasks := int64(0)
