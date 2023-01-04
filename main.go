@@ -397,7 +397,6 @@ func updateWorker(worker CeleryHeartbeat) {
 	}
 
 	d, _ := json.Marshal(celeryWorkers[worker.Hostname])
-
 	log.Debugf("Updated worker %s: %s", worker.Hostname, string(d))
 }
 
@@ -417,7 +416,9 @@ func getWorkerQueues(worker CeleryHeartbeat) []string {
 		}
 	}
 
-	return []string{"celery"}
+	log.Warnf("Could not map queue for worker %s", worker.Hostname)
+
+	return []string{}
 }
 
 type CeleryHeartbeatMessage struct {
@@ -475,7 +476,7 @@ func cleanupWorkers() {
 
 	for i := range celeryWorkers {
 		if time.Now().Sub(celeryWorkers[i].LastSeen).Seconds() > workerStaleTime {
-			log.Debugf("Removing worker %s because it has not been since for more than %.2f seconds", i, time.Now().Sub(celeryWorkers[i].LastSeen).Seconds())
+			log.Debugf("Removing worker %s because it has not been seen for %.2f seconds", i, time.Now().Sub(celeryWorkers[i].LastSeen).Seconds())
 			delete(celeryWorkers, i)
 		}
 	}
