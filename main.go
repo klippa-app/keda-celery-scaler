@@ -444,17 +444,20 @@ func processHeartbeat(msg *redis.Message) {
 	err := json.Unmarshal([]byte(msg.Payload), &decodedMessage)
 	if err != nil {
 		log.Warnf("could not decode heartbeat message: %s", err.Error())
+		return
 	}
 
 	sDec, err := base64.StdEncoding.DecodeString(decodedMessage.Body)
 	if err != nil {
 		log.Warnf("could not decode heartbeat message body: %s", err.Error())
+		return
 	}
 
 	decodedHeartbeat := CeleryHeartbeat{}
 	err = json.Unmarshal(sDec, &decodedHeartbeat)
 	if err != nil {
 		log.Warnf("could not decode heartbeat: %s", err.Error())
+		return
 	}
 
 	updateWorker(decodedHeartbeat)
