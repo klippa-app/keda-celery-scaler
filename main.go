@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/go-redis/redis/v8"
 	"net"
 	"net/http"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 
 	pb "github.com/klippa-app/keda-celery-scaler/externalscaler"
 
+	"github.com/go-redis/redis/v8"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
