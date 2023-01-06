@@ -1,5 +1,9 @@
 # KEDA Celery Scaler
 
+[![Build Status][build-status]][build-url]
+[build-url]:https://github.com/klippa-app/keda-celery-scaler/actions
+[build-status]:https://github.com/klippa-app/keda-celery-scaler/workflows/go/badge.svg
+
 An [External Scaler](https://keda.sh/docs/2.9/concepts/external-scalers/) for KEDA.
 
 **Only supports Celery Redis Broker for now, other brokers also have heartbeats so PRs are welcome!**
