@@ -1,6 +1,7 @@
 # KEDA Celery Scaler
 
 [![Build Status][build-status]][build-url]
+
 [build-url]:https://github.com/klippa-app/keda-celery-scaler/actions
 [build-status]:https://github.com/klippa-app/keda-celery-scaler/workflows/go/badge.svg
 
