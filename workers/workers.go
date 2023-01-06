@@ -98,7 +98,7 @@ func CleanupWorkers() {
 
 	for i := range celeryWorkers {
 		if time.Since(celeryWorkers[i].LastSeen).Seconds() > workerStaleTime {
-			log.Debugf("Removing worker %s because it has not been seen for %.2f seconds", i, time.Now().Sub(celeryWorkers[i].LastSeen).Seconds())
+			log.Debugf("Removing worker %s because it has not been seen for %.2f seconds", i, time.Since(celeryWorkers[i].LastSeen).Seconds())
 			delete(celeryWorkers, i)
 		}
 	}
