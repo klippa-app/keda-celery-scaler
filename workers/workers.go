@@ -2,6 +2,7 @@ package workers
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,11 +50,10 @@ func UpdateWorker(heartbeat celery.Heartbeat) {
 		celeryWorkers[heartbeat.Hostname].Queues = heartbeat.XWorkerInfo.Queues
 		celeryWorkers[heartbeat.Hostname].Concurrency = heartbeat.XWorkerInfo.Concurrency
 	} else {
-		// No worker info found, map queues from hostname and set concurrency to 1.
-		celeryWorkers[heartbeat.Hostname].Queues = getWorkerQueues(heartbeat)
-
-		// @todo: make a mapping for the concurrency too?
-		celeryWorkers[heartbeat.Hostname].Concurrency = 1
+		// No worker info found, map queues and concurrency from hostname.
+		queues, concurrency := getWorkerQueues(heartbeat)
+		celeryWorkers[heartbeat.Hostname].Queues = queues
+		celeryWorkers[heartbeat.Hostname].Concurrency = concurrency
 	}
 
 	// Log the current state of the worker.
@@ -63,7 +63,7 @@ func UpdateWorker(heartbeat celery.Heartbeat) {
 
 // getWorkerQueues maps the name of the worker to a list of queues set in the
 // environment variable KCS_WORKER_QUEUE_MAP.
-func getWorkerQueues(heartbeat celery.Heartbeat) []string {
+func getWorkerQueues(heartbeat celery.Heartbeat) ([]string, int64) {
 	workerQueueMapSetting := viper.GetString("worker_queue_map")
 	if workerQueueMapSetting != "" {
 		workerQueueMaps := strings.Split(workerQueueMapSetting, ";")
@@ -71,17 +71,30 @@ func getWorkerQueues(heartbeat celery.Heartbeat) []string {
 			workerQueueMap := workerQueueMaps[i]
 			workerQueueMapParts := strings.Split(workerQueueMap, ":")
 			workerQueueMapIdentifier := workerQueueMapParts[0]
-			workerQueueMapQueues := strings.Split(workerQueueMapParts[1], ",")
 			if strings.Contains(heartbeat.Hostname, workerQueueMapIdentifier) {
+				workerQueueMapQueues := strings.Split(workerQueueMapParts[1], ",")
+
+				// Default concurrency.
+				concurrency := 1
+
+				// Check if there is a concurrency set in the map.
+				if len(workerQueueMapParts) > 2 {
+					concurrencyString := workerQueueMapParts[2]
+					concurrencyStringParsed, err := strconv.Atoi(concurrencyString)
+					if err == nil {
+						concurrency = concurrencyStringParsed
+					}
+				}
+
 				log.Debugf("Mapped queues for worker %s to %s", heartbeat.Hostname, workerQueueMap)
-				return workerQueueMapQueues
+				return workerQueueMapQueues, int64(concurrency)
 			}
 		}
 	}
 
 	log.Warnf("Could not map queue for worker %s", heartbeat.Hostname)
 
-	return []string{}
+	return []string{}, 0
 }
 
 // CleanupWorkers will check all known workers for the last hearbeat time and
