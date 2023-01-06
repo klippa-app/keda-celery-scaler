@@ -171,6 +171,6 @@ func main() {
 
 	log.Infof("listenting on %s", address)
 	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("could not listedn on %s: %s", address, err.Error())
+		log.Fatalf("Could not start GRPC listener on %s: %s", address, err.Error())
 	}
 }
