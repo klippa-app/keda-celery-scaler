@@ -159,10 +159,8 @@ func main() {
 		}
 		ticker := time.NewTicker(time.Duration(workerCleanupInterval) * time.Second)
 		for {
-			select {
-			case <-ticker.C:
-				workers.CleanupWorkers()
-			}
+			<-ticker.C
+			workers.CleanupWorkers()
 		}
 	}()
 
