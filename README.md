@@ -1,6 +1,7 @@
 # KEDA Celery Scaler
 
 [![Build Status][build-status]][build-url]
+[![Docker](https://img.shields.io/docker/cloud/build/jerbob92/keda-celery-scaler?label=Docker&style=flat)](https://hub.docker.com/r/jerbob92/keda-celery-scaler/builds)
 
 [build-url]:https://github.com/klippa-app/keda-celery-scaler/actions
 
