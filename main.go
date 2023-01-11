@@ -2,55 +2,24 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net"
-	"net/http"
-	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/klippa-app/keda-celery-scaler/brokers"
 	pb "github.com/klippa-app/keda-celery-scaler/externalscaler"
+	"github.com/klippa-app/keda-celery-scaler/workers"
 
-	"github.com/go-chi/stampede"
 	log "github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-var (
-	reqCache = stampede.NewCache(512, time.Second*5, 0)
-)
-
-type FlowerWorker struct {
-	Active       []interface{} `json:"active"`
-	ActiveQueues []struct {
-		Name string `json:"name"`
-	} `json:"active_queues"`
-	Stats struct {
-		Pool struct {
-			MaxConcurrency int `json:"max-concurrency"`
-		} `json:"pool"`
-	}
-}
-
-type FlowerWorkerResult = map[string]FlowerWorker
-type FlowerWorkerStatusResult = map[string]bool
-
-type FlowerQueueLength struct {
-	ActiveQueues []struct {
-		Name     string `json:"name"`
-		Messages int    `json:"messages"`
-	} `json:"active_queues"`
-}
-
 type ExternalScaler struct{}
-
-var FlowerAddress = ""
 
 func (e *ExternalScaler) IsActive(ctx context.Context, scaledObject *pb.ScaledObjectRef) (*pb.IsActiveResponse, error) {
 	queue := scaledObject.ScalerMetadata["queue"]
@@ -81,17 +50,9 @@ func (e *ExternalScaler) IsActive(ctx context.Context, scaledObject *pb.ScaledOb
 	}, nil
 }
 
-var flowerClient = http.Client{
-	Timeout: time.Second * 30,
-}
-
 func getLoad(ctx context.Context, queue string) (int64, error) {
-	totalWorkersAvailable, totalActiveTasks, err := getQueueWorkers(ctx, queue)
-	if err != nil {
-		return 0, err
-	}
-
-	queueLength, err := getQueueLength(ctx, queue)
+	totalWorkersAvailable, totalActiveTasks := workers.GetQueueWorkers(queue)
+	queueLength, err := brokers.GetQueueLength(ctx, queue)
 	if err != nil {
 		return 0, err
 	}
@@ -115,156 +76,6 @@ func getLoad(ctx context.Context, queue string) (int64, error) {
 	log.Tracef("Load info for queue %s: workers: %d, active tasks: %d, queue length: %d", queue, totalWorkersAvailable, totalActiveTasks, queueLength)
 
 	return int64(load * float64(100)), nil
-}
-
-func loadWorkerInfo(ctx context.Context) (interface{}, error) {
-	// We need to add refresh so that we always have the latest info.
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/workers?refresh=1", FlowerAddress), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := flowerClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	payload := FlowerWorkerResult{}
-	err = json.Unmarshal(body, &payload)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	return payload, nil
-}
-
-func getQueueWorkers(ctx context.Context, queue string) (int64, int64, error) {
-	start := time.Now()
-
-	workerInfoData, err := reqCache.Get(ctx, "worker_info", loadWorkerInfo)
-	if err != nil {
-		return 0, 0, status.Error(codes.Internal, err.Error())
-	}
-
-	log.Tracef("Fetching worker info for queue %s took %s", queue, time.Since(start).String())
-
-	workerInfo := workerInfoData.(FlowerWorkerResult)
-
-	workerStatus, err := getQueueWorkerStatus(ctx, queue)
-	if err != nil {
-		return 0, 0, status.Error(codes.Internal, err.Error())
-	}
-
-	totalWorkersAvailable := int64(0)
-	totalActiveTasks := int64(0)
-
-	// Loop through all available workers.
-	for worker := range workerInfo {
-		if !(*workerStatus)[worker] {
-			continue
-		}
-
-		// Only count the workers that are listening to our queue.
-		shouldCountWorker := false
-		for i := range workerInfo[worker].ActiveQueues {
-			if workerInfo[worker].ActiveQueues[i].Name == queue {
-				shouldCountWorker = true
-				break
-			}
-		}
-
-		if shouldCountWorker {
-			totalActiveTasks += int64(len(workerInfo[worker].Active))
-			totalWorkersAvailable += int64(workerInfo[worker].Stats.Pool.MaxConcurrency)
-		}
-	}
-
-	log.Tracef("Calculating worker and task counts for queue %s took %s", queue, time.Since(start).String())
-
-	return totalWorkersAvailable, totalActiveTasks, nil
-}
-
-func loadQueueWorkerStatus(ctx context.Context) (interface{}, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/workers?status=1", FlowerAddress), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := flowerClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	payload := FlowerWorkerStatusResult{}
-	err = json.Unmarshal(body, &payload)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	return payload, nil
-}
-
-func getQueueWorkerStatus(ctx context.Context, queue string) (*FlowerWorkerStatusResult, error) {
-	start := time.Now()
-
-	queueWorkerStatusData, err := reqCache.Get(ctx, "worker_stats", loadQueueWorkerStatus)
-	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
-	}
-
-	queueWorkerStatus := queueWorkerStatusData.(FlowerWorkerStatusResult)
-
-	log.Tracef("Fetching worker status for queue %s took %s", queue, time.Since(start).String())
-
-	return &queueWorkerStatus, nil
-}
-
-func getQueueLength(ctx context.Context, queue string) (int64, error) {
-	start := time.Now()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/api/queues/length", FlowerAddress), nil)
-	if err != nil {
-		return 0, err
-	}
-
-	resp, err := flowerClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return 0, status.Error(codes.Internal, err.Error())
-	}
-
-	payload := FlowerQueueLength{}
-	err = json.Unmarshal(body, &payload)
-	if err != nil {
-		return 0, status.Error(codes.Internal, err.Error())
-	}
-
-	for i := range payload.ActiveQueues {
-		if payload.ActiveQueues[i].Name == queue {
-			return int64(payload.ActiveQueues[i].Messages), nil
-		}
-	}
-
-	log.Tracef("Fetching queue length for queue %s took %s", queue, time.Since(start).String())
-
-	return 0, nil
 }
 
 func (e *ExternalScaler) GetMetricSpec(ctx context.Context, scaledObject *pb.ScaledObjectRef) (*pb.GetMetricSpecResponse, error) {
@@ -320,7 +131,11 @@ func (e *ExternalScaler) StreamIsActive(scaledObject *pb.ScaledObjectRef, epsSer
 }
 
 func main() {
-	logLevel := os.Getenv("LOG_LEVEL")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.SetEnvPrefix("kcs")
+	viper.AutomaticEnv()
+
+	logLevel := viper.GetString("log_level")
 	if logLevel != "" {
 		parsedLogLevel, err := log.ParseLevel(logLevel)
 		if err == nil {
@@ -330,16 +145,29 @@ func main() {
 		}
 	}
 
-	FlowerAddress = os.Getenv("FLOWER_ADDRESS")
-	FlowerAddress = strings.TrimSpace(FlowerAddress)
-	if FlowerAddress == "" {
-		log.Fatal("Env variable FLOWER_ADDRESS needs to be set to a valid URL, value is empty")
+	err := brokers.ConnectBroker()
+	if err != nil {
+		log.Fatalf("Could not connect to broker: %s", err.Error())
 	}
 
-	_, err := url.Parse(FlowerAddress)
+	err = workers.BuildWorkerQueueMaps()
 	if err != nil {
-		log.Fatalf("Env variable FLOWER_ADDRESS needs to be set to a valid URL: %s", err.Error())
+		log.Fatalf("Could not parse worker queue map: %s", err.Error())
 	}
+
+	// Run worker cleaner task.
+	go func() {
+		// Clean every x seconds.
+		workerCleanupInterval := viper.GetInt("worker_cleanup_interval")
+		if workerCleanupInterval == 0 {
+			workerCleanupInterval = 5
+		}
+		ticker := time.NewTicker(time.Duration(workerCleanupInterval) * time.Second)
+		for {
+			<-ticker.C
+			workers.CleanupWorkers()
+		}
+	}()
 
 	address := ":6000"
 	grpcServer := grpc.NewServer()
@@ -348,28 +176,6 @@ func main() {
 
 	log.Infof("listenting on %s", address)
 	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatal(err)
+		log.Fatalf("Could not start GRPC listener on %s: %s", address, err.Error())
 	}
-}
-
-// Helper function to check load without KEDA.
-func checker() {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	done := make(chan bool)
-	go func() {
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				FlowerAddress = "http://127.0.0.1:8888"
-				load, err := getLoad(context.Background(), "celery")
-				if err != nil {
-					log.Fatal(err)
-				}
-
-				log.Printf("The current load is %d", load)
-			}
-		}
-	}()
 }
