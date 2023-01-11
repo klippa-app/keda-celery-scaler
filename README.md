@@ -12,7 +12,6 @@ An [External Scaler](https://keda.sh/docs/2.9/concepts/external-scalers/) for KE
 
 ## Why?
 
-KEDA allows you to autoscale based on the length of a queue, but that's probably not what you want.
 KEDA allows for autoscaling based on the length of queues, but it's application it not practical for time critical
 tasks. The drawback of queue length autoscaling is that scaling will only occur once tasks are queued. These queued
 tasks have a longer time to completion than desired.
