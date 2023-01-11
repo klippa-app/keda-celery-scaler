@@ -150,6 +150,11 @@ func main() {
 		log.Fatalf("Could not connect to broker: %s", err.Error())
 	}
 
+	err = workers.BuildWorkerQueueMaps()
+	if err != nil {
+		log.Fatalf("Could not parse worker queue map: %s", err.Error())
+	}
+
 	// Run worker cleaner task.
 	go func() {
 		// Clean every x seconds.

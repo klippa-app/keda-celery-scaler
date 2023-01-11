@@ -8,17 +8,20 @@
 
 An [External Scaler](https://keda.sh/docs/2.9/concepts/external-scalers/) for KEDA.
 
-**Only supports Celery Redis Broker for now, other brokers also have heartbeats so PRs are welcome!**
+**Only supports Celery Redis Broker for now, PRs for other brokers that have heartbeats are welcome!**
 
 ## Why?
 
 KEDA allows you to autoscale based on the length of a queue, but that's probably not what you want.
+KEDA allows for autoscaling based on the length of queues, but it's application it not practical for time critical
+tasks. The drawback of queue length autoscaling is that scaling will only occur once tasks are queued. These queued
+tasks have a longer time to completion than desired.
 
 What you want is scaling based on the load `(active tasks + queue length) / available workers` so that you're able to
 scale _before_ a queue starts building up. For example, you could start to scale up when the load is at 50%. This way
 you're able to handle peak load way better than with a queue length based scaler.
 
-## How?
+## Implementation
 
 Since Celery is quite unstable in a production situation where you have a lot of workers that scale up and down due to
 the way Celery workers communicate (we would advise everyone to set the Env
@@ -96,7 +99,7 @@ An example mapping could look like `email-worker:emails:1;notifications-worker:n
 | KCS_WORKER_CLEANUP_INTERVAL | How often to clean up lost workers in seconds.                                                                                                                                                                                                                                                  | 5                            |
 | KCS_WORKER_QUEUE_MAP        | When your Celery apps don't send the queue in the heartbeat, you can use this to map the workers by hostname. The format is {identifier1}:{queue1},{queue2}:{concurrency1};{identifier2}:{queue3},{queue4}:{concurrency2}. When the identifier is found in the worker hostname, it will map it. |                              |
 | KCS_REDIS_TYPE              | What type of redis to use, standalone or sentinel.                                                                                                                                                                                                                                              | standalone                   |
-| KCS_REDIS_SERVER            | host:port list, seperated by a comma (standalone uses only the first in case of multiple given)                                                                                                                                                                                                 | localhost:6379               |
+| KCS_REDIS_SERVER            | host:port list, seperated by a comma (redis in standalone uses only the first in case of multiple given)                                                                                                                                                                                        | localhost:6379               |
 | KCS_REDIS_DB                | The DB to use for the connection.                                                                                                                                                                                                                                                               | 0                            |
 | KCS_REDIS_USERNAME          | The username to use for the connection.                                                                                                                                                                                                                                                         |                              |
 | KCS_REDIS_PASSWORD          | The password to use for the connection.                                                                                                                                                                                                                                                         |                              |

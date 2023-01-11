@@ -2,6 +2,7 @@ package workers
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,13 +26,13 @@ type celeryWorker struct {
 var celeryWorkers = map[string]*celeryWorker{}
 
 // A lock for the map above.
-var workerMapLock sync.Mutex
+var celeryWorkersLock sync.Mutex
 
 // UpdateWorker will update the current state of a worker with the information
 // from the Celery heartbeat.
 func UpdateWorker(heartbeat celery.Heartbeat) {
-	workerMapLock.Lock()
-	defer workerMapLock.Unlock()
+	celeryWorkersLock.Lock()
+	defer celeryWorkersLock.Unlock()
 
 	// Register the worker if we don't know it yet.
 	_, ok := celeryWorkers[heartbeat.Hostname]
@@ -51,7 +52,7 @@ func UpdateWorker(heartbeat celery.Heartbeat) {
 		celeryWorkers[heartbeat.Hostname].Concurrency = heartbeat.XWorkerInfo.Concurrency
 	} else {
 		// No worker info found, map queues and concurrency from hostname.
-		queues, concurrency := getWorkerQueues(heartbeat)
+		queues, concurrency := mapQueuesToWorker(heartbeat)
 		celeryWorkers[heartbeat.Hostname].Queues = queues
 		celeryWorkers[heartbeat.Hostname].Concurrency = concurrency
 	}
@@ -61,34 +62,63 @@ func UpdateWorker(heartbeat celery.Heartbeat) {
 	log.Debugf("Updated worker %s: %s", heartbeat.Hostname, string(d))
 }
 
-// getWorkerQueues maps the name of the worker to a list of queues set in the
-// environment variable KCS_WORKER_QUEUE_MAP.
-func getWorkerQueues(heartbeat celery.Heartbeat) ([]string, int64) {
-	workerQueueMapSetting := viper.GetString("worker_queue_map")
-	if workerQueueMapSetting != "" {
-		workerQueueMaps := strings.Split(workerQueueMapSetting, ";")
-		for i := range workerQueueMaps {
-			workerQueueMap := workerQueueMaps[i]
-			workerQueueMapParts := strings.Split(workerQueueMap, ":")
-			workerQueueMapIdentifier := workerQueueMapParts[0]
-			if strings.Contains(heartbeat.Hostname, workerQueueMapIdentifier) {
-				workerQueueMapQueues := strings.Split(workerQueueMapParts[1], ",")
+type workerQueueMap struct {
+	Identifier  string
+	Concurrency int
+	Queues      []string
+}
 
-				// Default concurrency.
-				concurrency := 1
+var workerQueueMaps []workerQueueMap
 
-				// Check if there is a concurrency set in the map.
-				if len(workerQueueMapParts) > 2 {
-					concurrencyString := workerQueueMapParts[2]
-					concurrencyStringParsed, err := strconv.Atoi(concurrencyString)
-					if err == nil {
-						concurrency = concurrencyStringParsed
-					}
-				}
+// BuildWorkerQueueMaps parses the environment variable KCS_WORKER_QUEUE_MAP
+// into a queue map. The format is
+// {identifier1}:{queue1},{queue2}:{concurrency1};{identifier2}:{queue3},{queue4}:{concurrency2}.
+func BuildWorkerQueueMaps() error {
+	workerQueueMapSettingValue := viper.GetString("worker_queue_map")
+	if strings.TrimSpace(workerQueueMapSettingValue) == "" {
+		log.Debugf("No worker queue mapping given")
+		return nil
+	}
 
-				log.Debugf("Mapped queues for worker %s to %s", heartbeat.Hostname, workerQueueMap)
-				return workerQueueMapQueues, int64(concurrency)
+	workerQueueMapSettingValues := strings.Split(workerQueueMapSettingValue, ";")
+	for i := range workerQueueMapSettingValues {
+		workerQueueMapSetting := workerQueueMapSettingValues[i]
+		workerQueueMapSettingParts := strings.Split(workerQueueMapSetting, ":")
+		workerQueueMapSettingIdentifier := workerQueueMapSettingParts[0]
+
+		// Default concurrency.
+		concurrency := 1
+
+		// Check if there is a concurrency set in the map.
+		if len(workerQueueMapSettingParts) > 2 {
+			concurrencyString := workerQueueMapSettingParts[2]
+			concurrencyStringParsed, err := strconv.Atoi(concurrencyString)
+			if err != nil {
+				return fmt.Errorf("worker map value %s has an invalid concurrency: %s", workerQueueMapSetting, concurrencyString)
+			} else {
+				concurrency = concurrencyStringParsed
 			}
+		}
+
+		// Split up the queues by comma.
+		workerQueueMapQueues := strings.Split(workerQueueMapSettingParts[1], ",")
+
+		workerQueueMaps = append(workerQueueMaps, workerQueueMap{
+			Identifier:  workerQueueMapSettingIdentifier,
+			Concurrency: concurrency,
+			Queues:      workerQueueMapQueues,
+		})
+	}
+
+	return nil
+}
+
+// getWorkerQueues maps the name of the worker to a list of queues.
+func mapQueuesToWorker(heartbeat celery.Heartbeat) ([]string, int64) {
+	for i := range workerQueueMaps {
+		if strings.Contains(heartbeat.Hostname, workerQueueMaps[i].Identifier) {
+			log.Debugf("Mapped queues for worker %s to identifier %s with queues %s and concurrency %d", heartbeat.Hostname, workerQueueMaps[i].Identifier, strings.Join(workerQueueMaps[i].Queues, ", "), workerQueueMaps[i].Concurrency)
+			return workerQueueMaps[i].Queues, int64(workerQueueMaps[i].Concurrency)
 		}
 	}
 
@@ -101,8 +131,8 @@ func getWorkerQueues(heartbeat celery.Heartbeat) ([]string, int64) {
 // will remove the worker if it has become stale.
 func CleanupWorkers() {
 	log.Debugf("Running worker cleanup")
-	workerMapLock.Lock()
-	defer workerMapLock.Unlock()
+	celeryWorkersLock.Lock()
+	defer celeryWorkersLock.Unlock()
 
 	workerStaleTime := viper.GetFloat64("worker_stale_time")
 	if workerStaleTime == 0 {
@@ -120,8 +150,8 @@ func CleanupWorkers() {
 func GetQueueWorkers(queue string) (int64, int64) {
 	start := time.Now()
 
-	workerMapLock.Lock()
-	defer workerMapLock.Unlock()
+	celeryWorkersLock.Lock()
+	defer celeryWorkersLock.Unlock()
 
 	totalWorkersAvailable := int64(0)
 	totalActiveTasks := int64(0)
