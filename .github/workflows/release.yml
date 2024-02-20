@@ -9,8 +9,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
-        go: [ 1.19 ]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: [1.22]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
@@ -37,5 +37,5 @@ jobs:
           path: artifacts
       - uses: AButler/upload-release-assets@v2.0
         with:
-          files: 'artifacts/*'
+          files: "artifacts/*"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
