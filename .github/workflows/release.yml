@@ -33,7 +33,7 @@ jobs:
           go build -o artifacts/keda-celery-scaler-windows-x64 main.go
       - uses: actions/upload-artifact@v4
         with:
-          name: builds
+          name: builds-${{ matrix.os }}
           path: artifacts
       - uses: AButler/upload-release-assets@v3.0
         with:
