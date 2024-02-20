@@ -1,9 +1,8 @@
 name: Create and publish a Docker image to ghcr.io
 
 on:
-  push:
-    branches:
-      - "main"
+  release:
+    types: [created]
 
 env:
   REGISTRY: ghcr.io
@@ -33,14 +32,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,enable=true,priority=100,prefix=,suffix=,format=short
-
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
@@ -48,20 +39,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           provenance: false
           push: true
-          tags: ${{ steps.meta.outputs.tags }}-${{ github.run_number }}
+          tags: ${{ env.GITHUB_REF }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - uses: benjlevesque/short-sha@v2.2
-        id: short-sha
-
-      - name: Create tag
-        uses: actions/github-script@v6
-        with:
-          script: |
-            github.rest.git.createRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: 'refs/tags/${{ steps.short-sha.outputs.sha }}-${{ github.run_number }}',
-              sha: context.sha
-            })
